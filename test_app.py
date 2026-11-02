@@ -99,3 +99,30 @@ def test_level2_delay_shown_in_transit_from_announcement_day():
     # день 18 — день объявления задержки: план сдвинут, настоящий день прихода (поле day) не раскрывается
     assert st["day"] == 18 and pasta["planned_day"] == 20 and pasta["delay_announced"] and "day" not in pasta
     assert any(e["type"] == "supplier_delay" for e in st["events_info"])
+
+
+def test_control_levels_one_attempt_per_name_and_retry_only_on_training():
+    first = call("/api/start", {"name": "Контроль Ёж", "code": "запасы", "level": 3})
+    assert first[0] == 200 and call("/api/state", token=first[1]["token"])[1]["control"] is True
+    again = call("/api/start", {"name": "  контроль  еж ", "code": "запасы", "level": 3})
+    assert again[0] == 409 and "одна попытка" in again[1]["error"]
+    assert call("/api/start", {"name": "Контроль Ёж", "code": "запасы", "level": 4})[0] == 200
+    assert call("/api/retry", {}, first[1]["token"])[0] == 409
+
+    tok = call("/api/start", {"name": "Тренер", "code": "запасы", "level": 2})[1]["token"]
+    for _ in range(8):
+        call("/api/order", {"order": {}}, tok)
+    status, new = call("/api/retry", {}, tok)
+    assert status == 200 and new["token"] != tok and new["level"] == 2
+    for _ in range(8):
+        call("/api/order", {"order": {"milk": 30}}, new["token"])
+    rows = [r for r in call("/api/leaderboard?level=2")[1] if r["name"] == "Тренер"]
+    assert len(rows) == 1 and rows[0]["attempts"] == 2
+
+
+def test_level4_has_other_assortment_and_agent_doc_mentions_control():
+    tok = call("/api/start", {"name": "Ассортимент", "code": "запасы", "level": 4})[1]["token"]
+    skus = {s["sku"] for s in call("/api/state", token=tok)[1]["world"]["skus"]}
+    assert {"bananas", "cheese"} <= skus and "tea" not in skus
+    doc = call("/agent.md?level=4")[1]
+    assert "одна попытка" in doc and "кодом" in doc and "leaderboard?level=4" in doc

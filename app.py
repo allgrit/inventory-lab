@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import level2
 import sim
-import sim2
+from worlds import CONTROL_LEVELS, WORLDS
 
 DB = Path(os.environ.get("STAND_DB", "stand.db"))
 CODE = os.environ.get("STAND_CODE", "запасы")
@@ -48,7 +48,7 @@ def init_db():
 
 
 def game_view(row):
-    if row["level"] == 2:
+    if row["level"] >= 2:
         return level2.view(row)
     log = json.loads(row["log"])
     return {"token": row["id"], "name": row["name"], "level": 1, "title": TITLE1, "week": row["week"], "rounds": sim.ROUNDS,
@@ -59,17 +59,28 @@ def game_view(row):
 
 TITLE1 = "Уровень 1 · Магазин у дома (недели, 4 товара)"
 REFS = {1: [("Оракул (знает будущее)", sim.run_policy(sim.oracle)),
-            ("Наивная: заказ = прошлые продажи", sim.run_policy(sim.naive))],
-        2: [("Оракул (знает будущий спрос и задержки)", sim2.run_policy(sim2.oracle)),
-            ("Наивная: заказ = продажи за такой же прошлый период", sim2.run_policy(sim2.naive))]}
-ROUNDS = {1: sim.ROUNDS, 2: sim2.ROUNDS}
+            ("Наивная: заказ = прошлые продажи", sim.run_policy(sim.naive))]}
+REFS.update({lvl: [("Оракул (знает будущий спрос и задержки)", W.run_policy(W.oracle)),
+                   ("Наивная: заказ = продажи за такой же прошлый период", W.run_policy(W.naive))]
+             for lvl, W in WORLDS.items()})
+ROUNDS = {1: sim.ROUNDS, **{lvl: W.ROUNDS for lvl, W in WORLDS.items()}}
+LEVELS = set(ROUNDS)
+
+
+def name_key(name):
+    return " ".join(name.lower().replace("ё", "е").split())
 
 
 def leaderboard(level=1):
     with db() as con:
-        rows = con.execute("select name, total from games where level=? and week > ? order by total limit 100",
+        rows = con.execute("select name, total from games where level=? and week > ? order by total",
                            (level, ROUNDS[level])).fetchall()
-    board = [{"name": r["name"], "total": r["total"], "kind": "player"} for r in rows]
+    best = {}
+    for r in rows:  # лучший результат на имя; число завершённых попыток видно на тренировочном уровне
+        b = best.setdefault(name_key(r["name"]), {"name": r["name"], "total": r["total"], "kind": "player",
+                                                  "attempts": 0})
+        b["attempts"] += 1
+    board = sorted(best.values(), key=lambda r: r["total"])[:100]
     board += [{"name": n, "total": t, "kind": "ref"} for n, t in REFS[level]]
     return sorted(board, key=lambda r: r["total"])
 
@@ -115,7 +126,7 @@ AGENT_MD = f"""# Учебный стенд «Магазин у дома» — и
   — заказ на текущую неделю; ответ — новое состояние и итог недели в `log`.
 - `GET /api/leaderboard?level=1` — таблица.
 
-Есть и уровень 2 «Супермаркет» с дневными данными: `/agent.md?level=2`.
+Есть и уровень 2 «Супермаркет» с дневными данными: `/agent.md?level=2` (тренировка), контрольные — 3 и 4.
 
 {level2.CODE_RULE}
 
@@ -164,6 +175,13 @@ class Handler(BaseHTTPRequestHandler):
         with db() as con:
             return con.execute("select * from games where id=?", (gid,)).fetchone()
 
+    def level_arg(self):
+        try:
+            lvl = int(self.query("level") or 1)
+        except ValueError:
+            return 1
+        return lvl if lvl in LEVELS else 1
+
     def query(self, key):
         return (parse_qs(urlsplit(self.path).query).get(key) or [""])[0]
 
@@ -192,21 +210,38 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {"world": sim.public_world(), "rounds": sim.ROUNDS,
                                    "holding_rate": sim.HOLDING_RATE})
         if path == "/agent.md":
-            doc = level2.AGENT_MD if self.query("level") == "2" else AGENT_MD
+            lvl = self.level_arg()
+            doc = level2.agent_md(lvl) if lvl >= 2 else AGENT_MD
             return self.send(200, doc.encode(), "text/markdown; charset=utf-8")
         if path == "/api/export.csv":
             row = self.load()
             if not row:
                 return self.send(401, {"error": "Нужен ключ участника: ?token=XXXX-XXXX"})
-            csv = level2.export_csv(row) if row["level"] == 2 else export_csv(row)
+            csv = level2.export_csv(row) if row["level"] >= 2 else export_csv(row)
             return self.send(200, csv, "text/csv; charset=utf-8",
                              disposition=f'attachment; filename="shop-{row["id"]}-week{row["week"]}.csv"')
         if path == "/api/leaderboard":
-            return self.send(200, leaderboard(2 if self.query("level") == "2" else 1))
+            return self.send(200, leaderboard(self.level_arg()))
         if path == "/api/state":
             row = self.load()
             return self.send(200, game_view(row)) if row else self.send(401, {"error": "Сначала войдите"})
         self.send(404, {"error": "not found"})
+
+    def start_game(self, name, level):
+        start = level2.new_state_json(level) if level >= 2 else json.dumps(sim.initial_stock())
+        with LOCK, db() as con:
+            if level in CONTROL_LEVELS:
+                for r in con.execute("select id, name, week from games where level=?", (level,)).fetchall():
+                    if name_key(r["name"]) == name_key(name):
+                        return self.send(409, {"error": f"На контрольном уровне {level} одна попытка на имя: "
+                                                        f"«{r['name']}» уже играет. Продолжить можно по своему ключу."})
+            gid = new_token()
+            while con.execute("select 1 from games where id=?", (gid,)).fetchone():
+                gid = new_token()
+            con.execute("insert into games(id,name,week,stock,total,log,level) values(?,?,?,?,?,?,?)",
+                        (gid, name, 1, start, 0, "[]", level))
+        return self.send(200, {"token": gid, "game_id": gid, "name": name, "level": level},
+                         cookie=self.cookie(gid))
 
     def do_POST(self):
         path = self.path.split("?")[0]
@@ -220,17 +255,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(400, {"error": "Введите имя"})
             if str(data.get("code", "")).strip().lower() != CODE:
                 return self.send(403, {"error": "Неверное кодовое слово"})
-            level = 2 if str(data.get("level", "1")) == "2" else 1
-            start = level2.new_state_json() if level == 2 else json.dumps(sim.initial_stock())
-            with LOCK, db() as con:
-                gid = new_token()
-                while con.execute("select 1 from games where id=?", (gid,)).fetchone():
-                    gid = new_token()
-                con.execute("insert into games(id,name,week,stock,total,log,level) values(?,?,?,?,?,?,?)",
-                            (gid, name, 1, start, 0, "[]", level))
-            return self.send(200, {"token": gid, "game_id": gid, "name": name, "level": level},
-                             cookie=self.cookie(gid))
+            try:
+                level = int(data.get("level", 1))
+            except (TypeError, ValueError):
+                level = 1
+            if level not in LEVELS:
+                return self.send(400, {"error": "Уровни: 1, 2, 3, 4"})
+            return self.start_game(name, level)
+        if path == "/api/retry":
+            row = self.load()
+            if not row:
+                return self.send(401, {"error": "Сначала войдите"})
+            if row["level"] in CONTROL_LEVELS:
+                return self.send(409, {"error": "На контрольном уровне одна попытка"})
+            return self.start_game(row["name"], row["level"])
         if path == "/api/resume":
+
             gid = norm_token(data.get("token", ""))
             with db() as con:
                 row = con.execute("select * from games where id=?", (gid,)).fetchone() if gid else None
@@ -242,7 +282,7 @@ class Handler(BaseHTTPRequestHandler):
                 row = self.load()
                 if not row:
                     return self.send(401, {"error": "Сначала войдите"})
-                if row["level"] == 2:
+                if row["level"] >= 2:
                     code, err, upd = level2.order(row, data)
                     if not upd:
                         return self.send(code, err)
