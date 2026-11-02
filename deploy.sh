@@ -18,7 +18,7 @@ docker run -d --name inventory-lab-stand --restart unless-stopped \
   --log-opt max-size=5m --log-opt max-file=2 \
   -e STAND_DB=/data/stand.db -e PORT=8080 -e PYTHONDONTWRITEBYTECODE=1 \
   -v $DIR/app:/app:ro -v $DIR/data:/data -w /app python:3.12-alpine python app.py
-sleep 2; curl -fsS http://127.0.0.1:18090/health"
+for i in \$(seq 30); do curl -fsS http://127.0.0.1:18090/health && exit 0; sleep 1; done; echo НЕ_ПОДНЯЛСЯ; docker logs --tail 20 inventory-lab-stand; exit 1"
 
 # nginx: заменить заглушку 503 на прокси к стенду (идемпотентно; копия прежнего файла рядом с датой).
 $SSH $HOST 'set -e

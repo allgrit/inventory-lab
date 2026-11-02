@@ -24,7 +24,10 @@ table.d td,table.d th{padding:3px 5px;font-size:13px}.dis{opacity:.45}
 <div id="login" class="card">
 <div class="row" style="margin-bottom:14px">
 <label class="lvl"><input type="radio" name="level" value="1" checked> <b>Уровень 1 · Магазин у дома</b><br><span class="muted">4 недели, 4 товара, заказ раз в неделю. Начните с него.</span></label>
-<label class="lvl"><input type="radio" name="level" value="2"> <b>Уровень 2 · Супермаркет</b><br><span class="muted">28 дней по дням, 10 товаров, 5 поставщиков с разными днями заказа, сроки годности, новости.</span></label></div>
+<label class="lvl"><input type="radio" name="level" value="2"> <b>Уровень 2 · Супермаркет — тренировка</b><br><span class="muted">28 дней по дням, 10 товаров, 5 поставщиков, сроки годности, новости. Попыток сколько угодно: отлаживайте свою программу.</span></label></div>
+<div class="row" style="margin-bottom:14px">
+<label class="lvl"><input type="radio" name="level" value="3"> <b>Уровень 3 · Контроль A</b><br><span class="muted">Тот же магазин, другой месяц: другой спрос и события. <b>Одна попытка на имя.</b></span></label>
+<label class="lvl"><input type="radio" name="level" value="4"> <b>Уровень 4 · Контроль B</b><br><span class="muted">Другой ассортимент, больше неопределённости и сюрпризов. <b>Одна попытка на имя.</b></span></label></div>
 <div class="row">
 <div><label>Ваше имя или имя команды<input id="name" maxlength="40" autocomplete="off"></label></div>
 <div><label>Кодовое слово<input id="code" autocomplete="off"></label></div>
@@ -33,7 +36,7 @@ table.d td,table.d th{padding:3px 5px;font-size:13px}.dis{opacity:.45}
 <div><input id="tok" placeholder="ABCD-EFGH" autocomplete="off" style="text-transform:uppercase"></div>
 <div style="flex:0"><button id="resume">Продолжить</button></div></div><div id="lerr" class="err"></div></div>
 <div id="game" hidden></div>
-<h2>Лидерборд</h2><div class="tabs"><button id="tab1" class="on">Уровень 1</button> <button id="tab2">Уровень 2</button></div><div class="card tw"><table id="board"></table></div>
+<h2>Лидерборд</h2><div class="tabs"><button id="tab1" class="on">Уровень 1</button> <button id="tab2">Уровень 2</button> <button id="tab3">Контроль A</button> <button id="tab4">Контроль B</button></div><div class="card tw"><table id="board"></table></div>
 <details class="card"><summary>API для ИИ-агента</summary><p class="muted">
 Ключ участника выдаётся при входе. Инструкции: <a href="/agent.md">уровень 1</a>, <a href="/agent.md?level=2">уровень 2</a>. Агент обязан считать заказ кодом. Заголовок <code>Authorization: Bearer &lt;ключ&gt;</code>.<br>
 <code>GET /api/state</code> — остатки, история, мир (без будущего спроса). <code>POST /api/order</code> {"order":{"milk":120,"chips":30,"water":24,"coffee":0},"note":"почему"} — проигрывает неделю.<br>
@@ -43,13 +46,13 @@ table.d td,table.d th{padding:3px 5px;font-size:13px}.dis{opacity:.45}
 const $=s=>document.querySelector(s),rub=n=>n.toLocaleString('ru-RU')+' ₽';
 async function api(p,b){const r=await fetch(p,b?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b),credentials:'same-origin'}:{credentials:'same-origin'});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('Ошибка '+r.status));return j}
 let me=null,blevel=1;
-function setTab(l){blevel=l;$('#tab1').className=l===1?'on':'';$('#tab2').className=l===2?'on':'';board()}
-async function board(){const b=await api('/api/leaderboard?level='+blevel);let n=0;$('#board').innerHTML='<tr><th>#</th><th>Участник</th><th>Потери</th></tr>'+b.map(r=>`<tr class="${r.kind==='ref'?'ref':(me&&r.name===me?'me':'')}"><td>${r.kind==='ref'?'—':++n}</td><td style="text-align:left">${esc(r.name)}</td><td>${rub(r.total)}</td></tr>`).join('')}
+function setTab(l){blevel=l;for(const i of [1,2,3,4])$('#tab'+i).className=l===i?'on':'';board()}
+async function board(){const b=await api('/api/leaderboard?level='+blevel);let n=0;const att=blevel===2;$('#board').innerHTML='<tr><th>#</th><th>Участник</th>'+(att?'<th>Попыток</th>':'')+'<th>Потери</th></tr>'+b.map(r=>`<tr class="${r.kind==='ref'?'ref':(me&&r.name===me?'me':'')}"><td>${r.kind==='ref'?'—':++n}</td><td style="text-align:left">${esc(r.name)}</td>${att?`<td>${r.attempts||''}</td>`:''}<td>${rub(r.total)}</td></tr>`).join('')}
 
-function keyCard(s){return `<div class="lvlbadge">${esc(s.title)}</div><div class="card" style="border-left:4px solid var(--accent)"><div class="row"><div><div class="muted">Ваш ключ участника — запишите</div><div class="big" style="font-family:Consolas,monospace;letter-spacing:.08em">${s.token}</div></div>
+function keyCard(s){return `<div class="lvlbadge" style="${s.control?'background:#b2001b':''}">${esc(s.title)}</div><div class="card" style="border-left:4px solid var(--accent)"><div class="row"><div><div class="muted">Ваш ключ участника — запишите</div><div class="big" style="font-family:Consolas,monospace;letter-spacing:.08em">${s.token}</div></div>
 <div style="flex:2"><button id="copy">Копировать ключ</button> <a href="/api/export.csv?token=${s.token}"><button type="button">Скачать данные (CSV)</button></a> <a href="/agent.md?level=${s.level}" target="_blank"><button type="button">Инструкция для ИИ-агента</button></a>
 <div class="muted" style="margin-top:6px">Ключ нужен, чтобы вернуться в игру или дать играть агенту: <code>Authorization: Bearer ${s.token}</code></div></div></div></div>`}
-function render2(s){me=s.name;if(blevel!==2)setTab(2);$('#login').hidden=true;const g=$('#game');g.hidden=false;const w=s.world;
+function render2(s){me=s.name;if(blevel!==s.level)setTab(s.level);$('#login').hidden=true;const g=$('#game');g.hidden=false;const w=s.world;
  const sk=w.skus,sup=w.suppliers;
  const played=[];for(const r of s.log)for(const d of r.days)played.push(d);
  const cols=[...w.history_days.map(d=>({day:d,hist:true})),...played.map(d=>({day:d.day,lines:d.lines}))].slice(-14);
@@ -70,15 +73,15 @@ function render2(s){me=s.name;if(blevel!==2)setTab(2);$('#login').hidden=true;co
  if(s.log.length){const r=s.log[s.log.length-1];const sum=k=>{let a=0,so=0,wo=0,e=0,c=0;for(const d of r.days){const l=d.lines[k];a+=l.arrived;so+=l.sold;wo+=l.written_off;e+=l.empty?1:0;c+=l.cost}return {a,so,wo,e,c}};
   h+=`<div class="card tw"><h2 style="margin-top:0">Итог дней ${r.from}–${r.to}: ${rub(r.cost)}</h2><p class="muted">Нехватка ${rub(r.cost_parts.lost)} · списания ${rub(r.cost_parts.writeoff)} · хранение ${rub(r.cost_parts.holding)}</p><table><tr><th>Товар</th><th>Приехало</th><th>Продано</th><th>Дней с пустой полкой</th><th>Списано</th><th>Потери</th></tr>`+
   sk.map(k=>{const x=sum(k.sku);return `<tr><td>${esc(k.name)}</td><td>${x.a}</td><td>${x.so}</td><td class="${x.e?'zero':''}">${x.e}</td><td class="${x.wo?'zero':''}">${x.wo}</td><td>${rub(x.c)}</td></tr>`}).join('')+`</table></div>`}
- if(s.finished)h+=`<div class="card"><div class="big">Итог: ${rub(s.total)}</div><p>Сравните себя с оракулом и наивной политикой во вкладке «Уровень 2».</p><button id="again">Сыграть ещё раз</button></div>`;
+ if(s.finished)h+=`<div class="card"><div class="big">Итог: ${rub(s.total)}</div><p>Сравните себя с оракулом и наивной политикой в лидерборде этого уровня.</p>${s.control?'<p class="muted">Это контрольный уровень: попытка одна. Отлаживать программу — на уровне 2.</p>':'<button id="retry">Новая попытка (тот же уровень)</button>'}</div>`;
  g.innerHTML=h;
  $('#copy').onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(s.token);$('#copy').textContent='Скопировано'};
  const ob=$('#order');if(ob)ob.onclick=async()=>{ob.disabled=true;$('#oerr').textContent='';const order={};for(const k of sk){const el=$('#q-'+k.sku);if(el)order[k.sku]=Number(el.value||0)}
   try{render(await api('/api/order',{order,note:$('#note').value}));board()}catch(e){$('#oerr').textContent=e.message;ob.disabled=false}};
- const ag=$('#again');if(ag)ag.onclick=()=>{g.hidden=true;$('#login').hidden=false;$('#name').value=s.name};
+ const rt=$('#retry');if(rt)rt.onclick=async()=>{rt.disabled=true;try{await api('/api/retry',{});render(await api('/api/state'))}catch(e){alert(e.message);rt.disabled=false}};
  board()}
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
-function render(s){if(s.level===2)return render2(s);me=s.name;if(blevel!==1)setTab(1);$('#login').hidden=true;const g=$('#game');g.hidden=false;const w=s.world;
+function render(s){if(s.level>=2)return render2(s);me=s.name;if(blevel!==1)setTab(1);$('#login').hidden=true;const g=$('#game');g.hidden=false;const w=s.world;
  const histHead=['−4','−3','−2','−1'].map(x=>`<th>Нед ${x}</th>`).join('');
  const played=s.log.map(l=>`<th>Нед ${l.week}</th>`).join('');
  let h=`<div class="lvlbadge">${esc(s.title)}</div>`+`<div class="card" style="border-left:4px solid var(--accent)"><div class="row"><div><div class="muted">Ваш ключ участника — запишите</div><div class="big" style="font-family:Consolas,monospace;letter-spacing:.08em">${s.token}</div></div>
@@ -105,7 +108,7 @@ function render(s){if(s.level===2)return render2(s);me=s.name;if(blevel!==1)setT
  const ag=$('#again');if(ag)ag.onclick=()=>{g.hidden=true;$('#login').hidden=false;$('#name').value=s.name};
  board()}
 $('#resume').onclick=async()=>{$('#lerr').textContent='';try{render(await api('/api/resume',{token:$('#tok').value}))}catch(e){$('#lerr').textContent=e.message}};
-$('#tab1').onclick=()=>setTab(1);$('#tab2').onclick=()=>setTab(2);
+for(const i of [1,2,3,4])$('#tab'+i).onclick=()=>setTab(i);
 $('#start').onclick=async()=>{$('#lerr').textContent='';try{await api('/api/start',{name:$('#name').value,code:$('#code').value,level:document.querySelector('input[name=level]:checked').value});render(await api('/api/state'))}catch(e){$('#lerr').textContent=e.message}};
 api('/api/state').then(render).catch(()=>{});board();
 </script></body></html>

@@ -61,3 +61,13 @@ def test_supplier_schedule_next_order_and_arrival():
     sched = sim2.supplier_schedule(1)
     assert sched["drinks"]["next_order_day"] == 4 and sched["drinks"]["planned_arrival"] == 6
     assert sched["import"]["next_order_day"] == 1 and sched["import"]["planned_arrival"] == 8
+
+
+def test_level2_world_unchanged_by_refactor_and_control_worlds_are_sane():
+    import worlds
+    assert (sim2.run_policy(sim2.oracle), sim2.run_policy(sim2.naive)) == (4565, 14040)
+    for lvl in (3, 4):
+        W = worlds.WORLDS[lvl]
+        assert W.run_policy(W.oracle) < W.run_policy(W.naive) < W.run_policy(lambda s, last: {})
+    unannounced = [e for e in worlds.L4.EVENTS if e["announce"] is None]
+    assert unannounced and all(e["id"] not in {x["id"] for x in worlds.L4.public_events_info(28)} for e in unannounced)
