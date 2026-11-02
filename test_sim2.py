@@ -41,3 +41,23 @@ def test_history_shows_empty_shelf_only_for_milk_trap():
     empty = {k: [d for d, e in zip(sim2.HISTORY_DAYS, h["stock_end"]) if e == 0] for k, h in sim2.HISTORY.items()}
     assert empty.pop("milk") == [-9, -8, -7]
     assert not any(empty.values())
+
+
+def test_delay_becomes_visible_in_plan_only_after_announcement():
+    p = {"sku": "pasta", "ordered": 15, "planned": 18}
+    assert sim2.announced_arrival(p, 15) == (18, False)
+    assert sim2.announced_arrival(p, 18) == (20, True)
+
+
+def test_structured_events_and_history_empty_flag():
+    info = {e["id"]: e for e in sim2.public_events_info(15)}
+    assert info["oil-promo"]["skus"] == ["oil"] and info["heat"]["day_from"] == 19
+    assert "grocery-delay" not in info
+    hist = sim2.public_world()["history"]["milk"]
+    assert [d for d, e in zip(sim2.HISTORY_DAYS, hist["empty"]) if e] == [-9, -8, -7]
+
+
+def test_supplier_schedule_next_order_and_arrival():
+    sched = sim2.supplier_schedule(1)
+    assert sched["drinks"]["next_order_day"] == 4 and sched["drinks"]["planned_arrival"] == 6
+    assert sched["import"]["next_order_day"] == 1 and sched["import"]["planned_arrival"] == 8

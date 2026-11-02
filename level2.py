@@ -31,9 +31,16 @@ def view(row):
             "total": state["total"], "orderable": [] if sim2.finished(state) else sim2.orderable(state),
             "stock": sim2.stock_of(state),
             "batches": {k: [{"qty": q, "last_day": e} for q, e in v] for k, v in state["batches"].items()},
-            "in_transit": [{"sku": p["sku"], "qty": p["qty"], "ordered_day": p["ordered"],
-                            "planned_day": p["planned"]} for p in state["pending"]],
-            "events": sim2.public_events(day), "world": sim2.public_world(), "log": log}
+            "in_transit": [_transit(p, day) for p in state["pending"]],
+            "events": sim2.public_events(day), "events_info": sim2.public_events_info(day),
+            "suppliers_schedule": sim2.supplier_schedule(state["day"]),
+            "world": sim2.public_world(), "log": log}
+
+
+def _transit(p, day):
+    planned, delayed = sim2.announced_arrival(p, day)
+    return {"sku": p["sku"], "qty": p["qty"], "ordered_day": p["ordered"], "planned_day": planned,
+            "delay_announced": delayed}
 
 
 def order(row, data):
@@ -103,14 +110,25 @@ AGENT_MD = f"""# Уровень 2 «Супермаркет» — инструк�
 - Спрос зависит от дня недели. Новости (промо, погода, задержки) появляются в `events`, когда о них становится известно.
 - Продажи в день с пустой полкой (`shelf_empty=1`) ниже настоящего спроса.
 - Правила заказа: целые числа ≥ 0, кратно `pack`, не меньше `min_order` (или 0).
+- Каждый поставщик принимает заказы только в свои дни. Например, напитки заказываются по четвергам,
+  поэтому в первый ход (понедельник) их заказать нельзя — рассчитывай на стартовый остаток.
 
 ## API (база: https://inventory-lab.tsdpu.org)
 
 Ключ участника выдаёт человек; заголовок `Authorization: Bearer ABCD-EFGH`. Тело запросов — JSON в UTF-8.
 
-- `GET /api/state` — день, ход, `orderable`, `stock`, `batches` (партии и последний день годности),
-  `in_transit` (заказанное и плановый день прихода), `events`, `world` (поставщики, товары, 28 дней истории),
-  `log` (сыгранные дни по товарам).
+- `GET /api/state` — поля:
+  - `day`, `weekday`, `round`, `rounds`, `finished`, `total` — где мы и сколько потеряно;
+  - `orderable` — товары, которые можно заказать сегодня;
+  - `stock` — остаток на утро; `batches[sku]` — партии `{{qty, last_day}}` (`last_day` = null — не портится);
+  - `in_transit` — `{{sku, qty, ordered_day, planned_day, delay_announced}}`; объявленная задержка уже учтена в `planned_day`;
+  - `suppliers_schedule[поставщик]` — `{{next_order_day, planned_arrival, order_days, lead}}`;
+  - `events` — новости текстом; `events_info` — они же структурно: `type` (promo / weather / supplier_delay),
+    `skus`, `day_from`, `day_to`, `uplift_range` [мин, макс], `supplier`, `order_day`, `delay_days`;
+  - `world.skus`, `world.suppliers`; `world.history[sku]` — `sales`, `stock_end`, `empty` (1 = полка была пустой)
+    по дням `world.history_days` (−27 … 0);
+  - `log` — сыгранные ходы: `{{round, from, to, order, cost, cost_parts, days: [{{day, weekday,
+    lines: {{sku: {{arrived, sold, stock_end, written_off, empty, cost}}}}}}]}}`.
 - `GET /api/export.csv` — всё то же по дням в одной таблице.
 - `POST /api/order` — `{{"order": {{"milk": 40, "mince": 12}}, "note": "формула и числа"}}`.
 - `GET /api/leaderboard?level=2`.
