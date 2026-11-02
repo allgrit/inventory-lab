@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="icon" href="data:,"><title>Магазин у дома — учебный стенд</title>
+<link rel="icon" href="data:,"><title>Inventory Lab — учебный стенд</title>
 <style>
 :root{--bg:#f6f7f9;--panel:#fff;--soft:#e6f6ff;--text:#37415a;--muted:#5b6475;--line:#c7d2df;--accent:#0066ca;--bad:#b2001b;--good:#057452}
 *{box-sizing:border-box}body{margin:0;font:17px/1.45 system-ui,'Segoe UI',Arial,sans-serif;background:var(--bg);color:var(--text)}
@@ -13,10 +13,19 @@ button{font:inherit;background:var(--accent);color:#fff;border:0;padding:10px 18
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:end}.row>div{flex:1;min-width:180px}.err{color:var(--bad);margin-top:8px}
 .big{font-size:28px;font-weight:600}.ref td{color:var(--muted);font-style:italic}.me td{background:var(--soft);font-weight:600}
 code{background:var(--soft);padding:1px 5px}.tw{overflow-x:auto}
+.lvl{flex:1;min-width:260px;border:1px solid var(--line);padding:12px;cursor:pointer}.lvl input{width:auto}
+.tabs button{background:var(--panel);color:var(--text);border:1px solid var(--line)}.tabs button.on{background:var(--accent);color:#fff}
+.lvlbadge{display:inline-block;background:var(--accent);color:#fff;padding:3px 10px;font-size:14px;margin-bottom:6px}
+.news{border-left:4px solid #925700;background:#fff7e6;padding:10px 14px;margin:8px 0}
+table.d td,table.d th{padding:3px 5px;font-size:13px}.dis{opacity:.45}
 </style></head><body><main>
-<h1>Магазин у дома</h1>
-<p class="muted">Учебный стенд Forecast NOW!. 4 недели, 4 товара. Каждую неделю вы заказываете товар — он приезжает к началу недели, затем приходят покупатели. Цель — минимальные потери в рублях: упущенная маржа, списания и деньги на полке.</p>
-<div id="login" class="card"><div class="row">
+<h1>Inventory Lab</h1>
+<p class="muted">Учебный стенд Forecast NOW!: вы — закупщик. Цель — минимальные потери в рублях: упущенная маржа, списания и деньги на полке. Спрос одинаков для всех, поэтому результаты можно сравнивать.</p>
+<div id="login" class="card">
+<div class="row" style="margin-bottom:14px">
+<label class="lvl"><input type="radio" name="level" value="1" checked> <b>Уровень 1 · Магазин у дома</b><br><span class="muted">4 недели, 4 товара, заказ раз в неделю. Начните с него.</span></label>
+<label class="lvl"><input type="radio" name="level" value="2"> <b>Уровень 2 · Супермаркет</b><br><span class="muted">28 дней по дням, 10 товаров, 5 поставщиков с разными днями заказа, сроки годности, новости.</span></label></div>
+<div class="row">
 <div><label>Ваше имя или имя команды<input id="name" maxlength="40" autocomplete="off"></label></div>
 <div><label>Кодовое слово<input id="code" autocomplete="off"></label></div>
 <div style="flex:0"><button id="start">Начать игру</button></div></div>
@@ -24,23 +33,56 @@ code{background:var(--soft);padding:1px 5px}.tw{overflow-x:auto}
 <div><input id="tok" placeholder="ABCD-EFGH" autocomplete="off" style="text-transform:uppercase"></div>
 <div style="flex:0"><button id="resume">Продолжить</button></div></div><div id="lerr" class="err"></div></div>
 <div id="game" hidden></div>
-<h2>Лидерборд</h2><div class="card tw"><table id="board"></table></div>
+<h2>Лидерборд</h2><div class="tabs"><button id="tab1" class="on">Уровень 1</button> <button id="tab2">Уровень 2</button></div><div class="card tw"><table id="board"></table></div>
 <details class="card"><summary>API для ИИ-агента</summary><p class="muted">
-Ключ участника выдаётся при входе. Полная инструкция: <a href="/agent.md">/agent.md</a>. Заголовок <code>Authorization: Bearer &lt;ключ&gt;</code>.<br>
+Ключ участника выдаётся при входе. Инструкции: <a href="/agent.md">уровень 1</a>, <a href="/agent.md?level=2">уровень 2</a>. Агент обязан считать заказ кодом. Заголовок <code>Authorization: Bearer &lt;ключ&gt;</code>.<br>
 <code>GET /api/state</code> — остатки, история, мир (без будущего спроса). <code>POST /api/order</code> {"order":{"milk":120,"chips":30,"water":24,"coffee":0},"note":"почему"} — проигрывает неделю.<br>
 <code>GET /api/leaderboard</code>.</p></details>
 </main>
 <script>
 const $=s=>document.querySelector(s),rub=n=>n.toLocaleString('ru-RU')+' ₽';
 async function api(p,b){const r=await fetch(p,b?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b),credentials:'same-origin'}:{credentials:'same-origin'});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('Ошибка '+r.status));return j}
-let me=null;
-async function board(){const b=await api('/api/leaderboard');let n=0;$('#board').innerHTML='<tr><th>#</th><th>Участник</th><th>Потери</th></tr>'+b.map(r=>`<tr class="${r.kind==='ref'?'ref':(me&&r.name===me?'me':'')}"><td>${r.kind==='ref'?'—':++n}</td><td style="text-align:left">${esc(r.name)}</td><td>${rub(r.total)}</td></tr>`).join('')}
+let me=null,blevel=1;
+function setTab(l){blevel=l;$('#tab1').className=l===1?'on':'';$('#tab2').className=l===2?'on':'';board()}
+async function board(){const b=await api('/api/leaderboard?level='+blevel);let n=0;$('#board').innerHTML='<tr><th>#</th><th>Участник</th><th>Потери</th></tr>'+b.map(r=>`<tr class="${r.kind==='ref'?'ref':(me&&r.name===me?'me':'')}"><td>${r.kind==='ref'?'—':++n}</td><td style="text-align:left">${esc(r.name)}</td><td>${rub(r.total)}</td></tr>`).join('')}
+
+function keyCard(s){return `<div class="lvlbadge">${esc(s.title)}</div><div class="card" style="border-left:4px solid var(--accent)"><div class="row"><div><div class="muted">Ваш ключ участника — запишите</div><div class="big" style="font-family:Consolas,monospace;letter-spacing:.08em">${s.token}</div></div>
+<div style="flex:2"><button id="copy">Копировать ключ</button> <a href="/api/export.csv?token=${s.token}"><button type="button">Скачать данные (CSV)</button></a> <a href="/agent.md?level=${s.level}" target="_blank"><button type="button">Инструкция для ИИ-агента</button></a>
+<div class="muted" style="margin-top:6px">Ключ нужен, чтобы вернуться в игру или дать играть агенту: <code>Authorization: Bearer ${s.token}</code></div></div></div></div>`}
+function render2(s){me=s.name;if(blevel!==2)setTab(2);$('#login').hidden=true;const g=$('#game');g.hidden=false;const w=s.world;
+ const sk=w.skus,sup=w.suppliers;
+ const played=[];for(const r of s.log)for(const d of r.days)played.push(d);
+ const cols=[...w.history_days.map(d=>({day:d,hist:true})),...played.map(d=>({day:d.day,lines:d.lines}))].slice(-14);
+ const wdn=['пн','вт','ср','чт','пт','сб','вс'],wd=d=>wdn[((d-1)%7+7)%7];
+ let h=keyCard(s);
+ h+=`<div class="card"><div class="row"><div><div class="muted">Игрок</div><div class="big">${esc(s.name)}</div></div><div><div class="muted">День</div><div class="big">${s.finished?'игра окончена':s.day+' ('+s.weekday+'), ход '+s.round+' из '+s.rounds}</div></div><div><div class="muted">Потери на сейчас</div><div class="big">${rub(s.total)}</div></div></div></div>`;
+ if(s.events.length)h+=`<div class="card"><h2 style="margin-top:0">Новости</h2>${s.events.map(e=>`<div class="news">${esc(e)}</div>`).join('')}</div>`;
+ h+=`<div class="card tw"><h2 style="margin-top:0">Продажи по дням, последние 14 дней (в скобках — остаток на вечер)</h2><table class="d"><tr><th>Товар</th>${cols.map(c=>`<th>${c.day}<br>${wd(c.day)}</th>`).join('')}</tr>`;
+ for(const k of sk){h+=`<tr><td>${esc(k.name)}</td>`+cols.map(c=>{let sold,end,empty;if(c.hist){const i=w.history_days.indexOf(c.day);sold=w.history[k.sku].sales[i];end=w.history[k.sku].stock_end[i];empty=end===0}else{const l=c.lines[k.sku];sold=l.sold;end=l.stock_end;empty=l.empty}return `<td>${sold}<br><span class="${empty?'zero':'muted'}">(${end})</span></td>`}).join('')+'</tr>'}
+ h+=`</table><p class="muted">Дни ≤ 0 — история до игры. Красный ноль — полка была пустой: продажи ниже спроса. Вся история — в CSV.</p></div>`;
+ if(!s.finished){h+=`<div class="card tw"><h2 style="margin-top:0">Заказ, день ${s.day} (${s.weekday})</h2><table><tr><th>Товар</th><th>Поставщик · дни заказа · плечо</th><th>Годность</th><th>Кратн. / мин.</th><th>Закупка / продажа</th><th>Остаток</th><th>В пути</th><th>Заказ, шт</th></tr>`;
+  for(const k of sk){const p=sup[k.supplier],ok=s.orderable.includes(k.sku);
+   const tr=s.in_transit.filter(t=>t.sku===k.sku).map(t=>`${t.qty} (план. день ${t.planned_day})`).join(', ')||'—';
+   const bt=(s.batches[k.sku]||[]).filter(b=>b.last_day!==null).map(b=>`${b.qty} до дня ${b.last_day}`).join(', ');
+   h+=`<tr class="${ok?'':'dis'}"><td>${esc(k.name)}</td><td style="text-align:left">${esc(p.name)} · ${p.order_days.join('/')} · ${p.lead} дн.</td><td>${k.shelf?k.shelf+' дн.':'—'}</td><td>${k.pack} / ${k.min_order}</td><td>${k.buy} / ${k.sell} ₽</td><td><b>${s.stock[k.sku]}</b>${bt?`<div class="muted">${bt}</div>`:''}</td><td>${tr}</td><td>${ok?`<input class="q" type="number" min="0" step="${k.pack}" id="q-${k.sku}" value="0">`:'<span class="muted">не сегодня</span>'}</td></tr>`}
+  h+=`</table><p class="muted">Заказ приезжает утром дня «сегодня + плечо». Хранение: ${(w.holding_rate_day*100).toFixed(2)}% закупочной цены в день. Скоропорт списывается после последнего дня годности.</p>
+  <label>Почему такой заказ (формула, числа)<input id="note" maxlength="300"></label><p><button id="order">Заказать и прожить дни до следующего хода</button></p><div id="oerr" class="err"></div></div>`}
+ if(s.log.length){const r=s.log[s.log.length-1];const sum=k=>{let a=0,so=0,wo=0,e=0,c=0;for(const d of r.days){const l=d.lines[k];a+=l.arrived;so+=l.sold;wo+=l.written_off;e+=l.empty?1:0;c+=l.cost}return {a,so,wo,e,c}};
+  h+=`<div class="card tw"><h2 style="margin-top:0">Итог дней ${r.from}–${r.to}: ${rub(r.cost)}</h2><p class="muted">Нехватка ${rub(r.cost_parts.lost)} · списания ${rub(r.cost_parts.writeoff)} · хранение ${rub(r.cost_parts.holding)}</p><table><tr><th>Товар</th><th>Приехало</th><th>Продано</th><th>Дней с пустой полкой</th><th>Списано</th><th>Потери</th></tr>`+
+  sk.map(k=>{const x=sum(k.sku);return `<tr><td>${esc(k.name)}</td><td>${x.a}</td><td>${x.so}</td><td class="${x.e?'zero':''}">${x.e}</td><td class="${x.wo?'zero':''}">${x.wo}</td><td>${rub(x.c)}</td></tr>`}).join('')+`</table></div>`}
+ if(s.finished)h+=`<div class="card"><div class="big">Итог: ${rub(s.total)}</div><p>Сравните себя с оракулом и наивной политикой во вкладке «Уровень 2».</p><button id="again">Сыграть ещё раз</button></div>`;
+ g.innerHTML=h;
+ $('#copy').onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(s.token);$('#copy').textContent='Скопировано'};
+ const ob=$('#order');if(ob)ob.onclick=async()=>{ob.disabled=true;$('#oerr').textContent='';const order={};for(const k of sk){const el=$('#q-'+k.sku);if(el)order[k.sku]=Number(el.value||0)}
+  try{render(await api('/api/order',{order,note:$('#note').value}));board()}catch(e){$('#oerr').textContent=e.message;ob.disabled=false}};
+ const ag=$('#again');if(ag)ag.onclick=()=>{g.hidden=true;$('#login').hidden=false;$('#name').value=s.name};
+ board()}
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
-function render(s){me=s.name;$('#login').hidden=true;const g=$('#game');g.hidden=false;const w=s.world;
+function render(s){if(s.level===2)return render2(s);me=s.name;if(blevel!==1)setTab(1);$('#login').hidden=true;const g=$('#game');g.hidden=false;const w=s.world;
  const histHead=['−4','−3','−2','−1'].map(x=>`<th>Нед ${x}</th>`).join('');
  const played=s.log.map(l=>`<th>Нед ${l.week}</th>`).join('');
- let h=`<div class="card" style="border-left:4px solid var(--accent)"><div class="row"><div><div class="muted">Ваш ключ участника — запишите</div><div class="big" style="font-family:Consolas,monospace;letter-spacing:.08em">${s.token}</div></div>
-<div style="flex:2"><button id="copy">Копировать ключ</button> <a href="/api/export.csv?token=${s.token}"><button type="button">Скачать данные (CSV)</button></a> <a href="/agent.md" target="_blank"><button type="button">Инструкция для ИИ-агента</button></a>
+ let h=`<div class="lvlbadge">${esc(s.title)}</div>`+`<div class="card" style="border-left:4px solid var(--accent)"><div class="row"><div><div class="muted">Ваш ключ участника — запишите</div><div class="big" style="font-family:Consolas,monospace;letter-spacing:.08em">${s.token}</div></div>
+<div style="flex:2"><button id="copy">Копировать ключ</button> <a href="/api/export.csv?token=${s.token}"><button type="button">Скачать данные (CSV)</button></a> <a href="/agent.md?level=${s.level||1}" target="_blank"><button type="button">Инструкция для ИИ-агента</button></a>
 <div class="muted" style="margin-top:6px">Ключ нужен, чтобы вернуться в игру с другого устройства или дать играть агенту: <code>Authorization: Bearer ${s.token}</code></div></div></div></div>
 <div class="card"><div class="row"><div><div class="muted">Игрок</div><div class="big">${esc(s.name)}</div></div><div><div class="muted">Неделя</div><div class="big">${s.finished?'игра окончена':s.week+' из '+s.rounds}</div></div><div><div class="muted">Потери на сейчас</div><div class="big">${rub(s.total)}</div></div></div></div>`;
  h+=`<div class="card tw"><h2 style="margin-top:0">Продажи (в скобках — остаток на конец недели)</h2><table><tr><th>Товар</th>${histHead}${played}<th>Остаток сейчас</th></tr>`;
@@ -63,6 +105,7 @@ function render(s){me=s.name;$('#login').hidden=true;const g=$('#game');g.hidden
  const ag=$('#again');if(ag)ag.onclick=()=>{g.hidden=true;$('#login').hidden=false;$('#name').value=s.name};
  board()}
 $('#resume').onclick=async()=>{$('#lerr').textContent='';try{render(await api('/api/resume',{token:$('#tok').value}))}catch(e){$('#lerr').textContent=e.message}};
-$('#start').onclick=async()=>{$('#lerr').textContent='';try{await api('/api/start',{name:$('#name').value,code:$('#code').value});render(await api('/api/state'))}catch(e){$('#lerr').textContent=e.message}};
+$('#tab1').onclick=()=>setTab(1);$('#tab2').onclick=()=>setTab(2);
+$('#start').onclick=async()=>{$('#lerr').textContent='';try{await api('/api/start',{name:$('#name').value,code:$('#code').value,level:document.querySelector('input[name=level]:checked').value});render(await api('/api/state'))}catch(e){$('#lerr').textContent=e.message}};
 api('/api/state').then(render).catch(()=>{});board();
 </script></body></html>

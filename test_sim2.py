@@ -1,0 +1,43 @@
+import sim2
+
+
+def test_oracle_beats_naive_and_nothing():
+    oracle, naive = sim2.run_policy(sim2.oracle), sim2.run_policy(sim2.naive)
+    nothing = sim2.run_policy(lambda state, last: {})
+    assert oracle < naive < nothing
+
+
+def test_order_rules_by_weekday_pack_and_min():
+    state = sim2.new_state()  # день 1, понедельник
+    assert "water" not in sim2.orderable(state)  # напитки заказываются по четвергам
+    _, errors = sim2.validate_order({"water": 48}, state)
+    assert errors
+    _, errors = sim2.validate_order({"pasta": 12}, state)
+    assert errors  # минимум 24
+    clean, errors = sim2.validate_order({"pasta": 24, "milk": 20}, state)
+    assert not errors and clean == {"pasta": 24, "milk": 20}
+
+
+def test_fifo_expiry_writes_off_old_batch():
+    state = sim2.new_state()
+    state["batches"]["milk"] = [[500, 1]]  # партия годна только в день 1
+    state, rep = sim2.play_round(state, {})
+    day1 = rep["days"][0]["lines"]["milk"]
+    assert day1["written_off"] == 500 - day1["sold"]
+    assert rep["days"][1]["lines"]["milk"]["stock_end"] == 0
+
+
+def test_delivery_arrives_after_lead_time_and_delay_event():
+    assert sim2._arrival("milk", 1) == 2
+    assert sim2._arrival("pasta", 15) == 15 + 3 + 2  # необъявленная задержка
+
+
+def test_events_announced_only_from_their_day():
+    assert not any("жара" in e for e in sim2.public_events(11))
+    assert any("жара" in e.lower() for e in sim2.public_events(15))
+
+
+def test_history_shows_empty_shelf_only_for_milk_trap():
+    empty = {k: [d for d, e in zip(sim2.HISTORY_DAYS, h["stock_end"]) if e == 0] for k, h in sim2.HISTORY.items()}
+    assert empty.pop("milk") == [-9, -8, -7]
+    assert not any(empty.values())
