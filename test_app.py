@@ -1,0 +1,72 @@
+import json
+import os
+import re
+import tempfile
+import threading
+import urllib.error
+import urllib.request
+
+os.environ["STAND_DB"] = os.path.join(tempfile.mkdtemp(), "t.db")
+import app  # noqa: E402
+
+app.init_db()
+SERVER = app.ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
+threading.Thread(target=SERVER.serve_forever, daemon=True).start()
+BASE = f"http://127.0.0.1:{SERVER.server_port}"
+OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def call(path, body=None, token=None):
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    req = urllib.request.Request(BASE + path, data=json.dumps(body).encode() if body is not None else None,
+                                 headers=headers)
+    try:
+        r = OPENER.open(req, timeout=5)
+        raw = r.read()
+        return r.status, (json.loads(raw) if "json" in r.headers["Content-Type"] else raw.decode("utf-8-sig"))
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+
+
+def test_short_token_resume_export_and_agent_doc():
+    assert call("/api/start", {"name": "Аня", "code": "нет"})[0] == 403
+    status, j = call("/api/start", {"name": "Аня", "code": "Запасы"})
+    token = j["token"]
+    assert status == 200 and re.fullmatch(r"[A-Z2-9]{4}-[A-Z2-9]{4}", token)
+
+    status, state = call("/api/resume", {"token": token.lower().replace("-", "")})
+    assert status == 200 and state["name"] == "Аня" and state["token"] == token
+    assert call("/api/resume", {"token": "ZZZZ-ZZZZ"})[0] == 404
+
+    call("/api/order", {"order": {"milk": 120}}, token)
+    status, csv = call(f"/api/export.csv?token={token}")
+    rows = csv.strip().split("\n")
+    assert status == 200 and rows[0].startswith("sku;")
+    assert all(len(r.split(";")) == len(rows[0].split(";")) for r in rows)
+    assert "demand" not in csv and any(";сыграно" in r for r in rows)
+
+    status, doc = call("/agent.md")
+    assert status == 200 and "Authorization: Bearer" in doc
+
+
+def test_cp1251_body_and_world_without_start_stock():
+    token = call("/api/start", {"name": "Кодировка", "code": "запасы"})[1]["token"]
+    req = urllib.request.Request(BASE + "/api/order", headers={"Authorization": "Bearer " + token},
+                                 data=json.dumps({"order": {"milk": 120}, "note": "молоко"},
+                                                 ensure_ascii=False).encode("cp1251"))
+    state = json.loads(OPENER.open(req, timeout=5).read())
+    assert state["week"] == 2 and state["log"][0]["note"] == "молоко"
+    assert all("stock" not in w for w in state["world"])
+
+
+def test_csv_marks_promo_week_and_conditions():
+    token = call("/api/start", {"name": "Промо", "code": "запасы"})[1]["token"]
+    for _ in range(2):
+        call("/api/order", {"order": {}}, token)
+    rows = call(f"/api/export.csv?token={token}")[1].strip().split("\n")
+    head = rows[0].split(";")
+    chips_now = [dict(zip(head, r.split(";"))) for r in rows if r.startswith("chips;") and "нужен заказ" in r][0]
+    assert chips_now["week"] == "3" and chips_now["promo"] == "1" and "ПРОМО" in chips_now["note"]
+    assert "2,5–3,5" in chips_now["conditions"]
