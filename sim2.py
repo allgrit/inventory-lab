@@ -49,11 +49,15 @@ BY_SKU = {s["sku"]: s for s in SKUS}
 # События: announce — день, с которого игрок о нём знает (None — не объявляется)
 EVENTS = [
     {"id": "oil-promo", "text": "Промо на масло, дни 15–21: скидка 20 %, в прошлых акциях продажи росли в 2–3 раза",
-     "announce": 1, "days": range(15, 22), "skus": {"oil": 2.5}},
+     "announce": 1, "days": range(15, 22), "skus": {"oil": 2.5},
+     "info": {"type": "promo", "skus": ["oil"], "day_from": 15, "day_to": 21, "uplift_range": [2, 3]}},
     {"id": "heat", "text": "Прогноз: жара в дни 19–23, напитки обычно продаются в 1,5–2 раза лучше",
-     "announce": 15, "days": range(19, 24), "skus": {"water": 1.8, "juice": 1.4}},
+     "announce": 15, "days": range(19, 24), "skus": {"water": 1.8, "juice": 1.4},
+     "info": {"type": "weather", "skus": ["water", "juice"], "day_from": 19, "day_to": 23,
+              "uplift_range": [1.5, 2]}},
     {"id": "grocery-delay", "text": "Дистрибьютор бакалеи задержал поставку, заказанную в день 15, на 2 дня",
-     "announce": 18, "days": range(0), "skus": {}, "delay": {"supplier": "grocery", "order_day": 15, "days": 2}},
+     "announce": 18, "days": range(0), "skus": {}, "delay": {"supplier": "grocery", "order_day": 15, "days": 2},
+     "info": {"type": "supplier_delay", "supplier": "grocery", "order_day": 15, "delay_days": 2}},
 ]
 
 
@@ -211,13 +215,40 @@ def public_events(day):
     return [e["text"] for e in EVENTS if e["announce"] is not None and e["announce"] <= day]
 
 
+def public_events_info(day):
+    """То же, что public_events, но структурно: тип, товары, дни, диапазон множителя, поставщик."""
+    return [{"id": e["id"], "text": e["text"], "announced_day": e["announce"], **e["info"]}
+            for e in EVENTS if e["announce"] is not None and e["announce"] <= day]
+
+
+def announced_arrival(p, day):
+    """Плановый день прихода, каким его знает игрок: задержка видна с момента объявления."""
+    for e in EVENTS:
+        d = e.get("delay")
+        if (d and e["announce"] <= day and d["order_day"] == p["ordered"]
+                and d["supplier"] == BY_SKU[p["sku"]]["supplier"]):
+            return p["planned"] + d["days"], True
+    return p["planned"], False
+
+
+def supplier_schedule(day):
+    """Для каждого поставщика: ближайший день заказа (≥ day) и плановый приход такого заказа."""
+    out = {}
+    for code, sup in SUPPLIERS.items():
+        nxt = next((d for d in ORDER_DAYS if d >= day and _weekday(d) in sup["order_days"]), None)
+        out[code] = {"next_order_day": nxt, "planned_arrival": nxt + sup["lead"] if nxt else None,
+                     "order_days": sup["order_days"], "lead": sup["lead"]}
+    return out
+
+
 def public_world():
     return {"days": DAYS, "order_days": ORDER_DAYS, "holding_rate_day": HOLDING_RATE_DAY,
             "suppliers": SUPPLIERS,
             "skus": [{k: s[k] for k in ("sku", "name", "supplier", "buy", "sell", "shelf", "pack", "min_order")}
                      for s in SKUS],
             "history_days": HISTORY_DAYS,
-            "history": HISTORY}
+            "history": {k: {**h, "empty": [1 if e == 0 else 0 for e in h["stock_end"]]}
+                        for k, h in HISTORY.items()}}
 
 
 # ---------- опорные политики ----------
