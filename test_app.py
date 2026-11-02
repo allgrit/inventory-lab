@@ -70,3 +70,30 @@ def test_csv_marks_promo_week_and_conditions():
     chips_now = [dict(zip(head, r.split(";"))) for r in rows if r.startswith("chips;") and "нужен заказ" in r][0]
     assert chips_now["week"] == "3" and chips_now["promo"] == "1" and "ПРОМО" in chips_now["note"]
     assert "2,5–3,5" in chips_now["conditions"]
+
+
+def test_level2_game_flow_csv_and_separate_leaderboard():
+    token = call("/api/start", {"name": "Уровень2", "code": "запасы", "level": 2})[1]["token"]
+    status, st = call("/api/state", token=token)
+    assert status == 200 and st["level"] == 2 and st["day"] == 1 and "water" not in st["orderable"]
+    assert call("/api/order", {"order": {"water": 48}}, token)[0] == 400
+    status, st = call("/api/order", {"order": {"milk": 20, "pasta": 24}}, token)
+    assert status == 200 and st["round"] == 2 and st["day"] == 4
+    assert {p["sku"] for p in st["in_transit"]} == {"pasta"}  # молоко уже приехало, бакалея едет 3 дня
+    csv = call(f"/api/export.csv?token={token}")[1]
+    assert "день" not in csv.split("\n")[0] and ";сыграно" in csv and "shelf_empty" in csv
+    for _ in range(7):
+        call("/api/order", {"order": {}}, token)
+    assert call("/api/state", token=token)[1]["finished"]
+    names2 = [r["name"] for r in call("/api/leaderboard?level=2")[1]]
+    names1 = [r["name"] for r in call("/api/leaderboard?level=1")[1]]
+    assert "Уровень2" in names2 and "Уровень2" not in names1
+
+
+def test_level2_hidden_delay_not_visible_in_transit():
+    token = call("/api/start", {"name": "Задержка", "code": "запасы", "level": 2})[1]["token"]
+    for _ in range(4):
+        call("/api/order", {"order": {}}, token)
+    st = call("/api/order", {"order": {"pasta": 24}}, token)[1]  # ход в день 15
+    pasta = [p for p in st["in_transit"] if p["sku"] == "pasta"][0]
+    assert pasta["planned_day"] == 18 and "day" not in pasta

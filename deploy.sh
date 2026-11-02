@@ -7,7 +7,9 @@ DIR=/opt/apps/inventory-lab-stand
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30"
 cd "$(dirname "$0")"
 $SSH $HOST "mkdir -p $DIR/app $DIR/data && chown 1000:1000 $DIR/data"
-scp -o BatchMode=yes -q app.py sim.py index.html $HOST:$DIR/app/
+FILES=$(ls *.py | grep -v "^test_")
+"${PYTHON:-python3}" -c "import app"  # все модули должны импортироваться до выкладки
+scp -o BatchMode=yes -q $FILES index.html $HOST:$DIR/app/
 $SSH $HOST "set -e
 docker rm -f inventory-lab-stand >/dev/null 2>&1 || true
 docker run -d --name inventory-lab-stand --restart unless-stopped \

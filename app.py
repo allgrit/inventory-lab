@@ -9,7 +9,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+import level2
 import sim
+import sim2
 
 DB = Path(os.environ.get("STAND_DB", "stand.db"))
 CODE = os.environ.get("STAND_CODE", "запасы")
@@ -40,23 +42,35 @@ def init_db():
             id text primary key, name text not null, week integer not null,
             stock text not null, total integer not null, log text not null,
             created text default current_timestamp)""")
+        cols = [r[1] for r in con.execute("pragma table_info(games)")]
+        if "level" not in cols:
+            con.execute("alter table games add column level integer not null default 1")
 
 
 def game_view(row):
+    if row["level"] == 2:
+        return level2.view(row)
     log = json.loads(row["log"])
-    return {"token": row["id"], "name": row["name"], "week": row["week"], "rounds": sim.ROUNDS,
+    return {"token": row["id"], "name": row["name"], "level": 1, "title": TITLE1, "week": row["week"], "rounds": sim.ROUNDS,
             "finished": row["week"] > sim.ROUNDS, "stock": json.loads(row["stock"]),
             "total": row["total"], "log": log, "world": sim.public_world(),
             "holding_rate": sim.HOLDING_RATE}
 
 
-def leaderboard():
+TITLE1 = "Уровень 1 · Магазин у дома (недели, 4 товара)"
+REFS = {1: [("Оракул (знает будущее)", sim.run_policy(sim.oracle)),
+            ("Наивная: заказ = прошлые продажи", sim.run_policy(sim.naive))],
+        2: [("Оракул (знает будущий спрос и задержки)", sim2.run_policy(sim2.oracle)),
+            ("Наивная: заказ = продажи за такой же прошлый период", sim2.run_policy(sim2.naive))]}
+ROUNDS = {1: sim.ROUNDS, 2: sim2.ROUNDS}
+
+
+def leaderboard(level=1):
     with db() as con:
-        rows = con.execute("select name, total, week from games where week > ? order by total limit 50",
-                           (sim.ROUNDS,)).fetchall()
+        rows = con.execute("select name, total from games where level=? and week > ? order by total limit 100",
+                           (level, ROUNDS[level])).fetchall()
     board = [{"name": r["name"], "total": r["total"], "kind": "player"} for r in rows]
-    board += [{"name": "Оракул (знает будущее)", "total": sim.run_policy(sim.oracle), "kind": "ref"},
-              {"name": "Наивная: заказ = прошлые продажи", "total": sim.run_policy(sim.naive), "kind": "ref"}]
+    board += [{"name": n, "total": t, "kind": "ref"} for n, t in REFS[level]]
     return sorted(board, key=lambda r: r["total"])
 
 
@@ -99,7 +113,11 @@ AGENT_MD = f"""# Учебный стенд «Магазин у дома» — и
 - `GET /api/export.csv` — то же в CSV.
 - `POST /api/order` с JSON `{{"order": {{"milk": 120, "chips": 30, "water": 24, "coffee": 0}}, "note": "почему"}}`
   — заказ на текущую неделю; ответ — новое состояние и итог недели в `log`.
-- `GET /api/leaderboard` — таблица.
+- `GET /api/leaderboard?level=1` — таблица.
+
+Есть и уровень 2 «Супермаркет» с дневными данными: `/agent.md?level=2`.
+
+{level2.CODE_RULE}
 
 Правила заказа: целые числа ≥ 0; вода кратно 6 и не меньше 24 (или 0). Не указанный товар = 0.
 `note` необязателен, но полезен: коротко объясни, почему такое количество.
@@ -146,13 +164,16 @@ class Handler(BaseHTTPRequestHandler):
         with db() as con:
             return con.execute("select * from games where id=?", (gid,)).fetchone()
 
+    def query(self, key):
+        return (parse_qs(urlsplit(self.path).query).get(key) or [""])[0]
+
     def cookie(self, gid):
         c = f"game={gid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800"
         return c + "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else c
 
     def body(self):
         n = int(self.headers.get("Content-Length") or 0)
-        if n > 10000:
+        if n > 20000:
             raise ValueError("too large")
         raw = self.rfile.read(n) or b"{}"
         try:
@@ -171,15 +192,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {"world": sim.public_world(), "rounds": sim.ROUNDS,
                                    "holding_rate": sim.HOLDING_RATE})
         if path == "/agent.md":
-            return self.send(200, AGENT_MD.encode(), "text/markdown; charset=utf-8")
+            doc = level2.AGENT_MD if self.query("level") == "2" else AGENT_MD
+            return self.send(200, doc.encode(), "text/markdown; charset=utf-8")
         if path == "/api/export.csv":
             row = self.load()
             if not row:
                 return self.send(401, {"error": "Нужен ключ участника: ?token=XXXX-XXXX"})
-            return self.send(200, export_csv(row), "text/csv; charset=utf-8",
+            csv = level2.export_csv(row) if row["level"] == 2 else export_csv(row)
+            return self.send(200, csv, "text/csv; charset=utf-8",
                              disposition=f'attachment; filename="shop-{row["id"]}-week{row["week"]}.csv"')
         if path == "/api/leaderboard":
-            return self.send(200, leaderboard())
+            return self.send(200, leaderboard(2 if self.query("level") == "2" else 1))
         if path == "/api/state":
             row = self.load()
             return self.send(200, game_view(row)) if row else self.send(401, {"error": "Сначала войдите"})
@@ -197,13 +220,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(400, {"error": "Введите имя"})
             if str(data.get("code", "")).strip().lower() != CODE:
                 return self.send(403, {"error": "Неверное кодовое слово"})
+            level = 2 if str(data.get("level", "1")) == "2" else 1
+            start = level2.new_state_json() if level == 2 else json.dumps(sim.initial_stock())
             with LOCK, db() as con:
                 gid = new_token()
                 while con.execute("select 1 from games where id=?", (gid,)).fetchone():
                     gid = new_token()
-                con.execute("insert into games(id,name,week,stock,total,log) values(?,?,?,?,?,?)",
-                            (gid, name, 1, json.dumps(sim.initial_stock()), 0, "[]"))
-            return self.send(200, {"token": gid, "game_id": gid, "name": name}, cookie=self.cookie(gid))
+                con.execute("insert into games(id,name,week,stock,total,log,level) values(?,?,?,?,?,?,?)",
+                            (gid, name, 1, start, 0, "[]", level))
+            return self.send(200, {"token": gid, "game_id": gid, "name": name, "level": level},
+                             cookie=self.cookie(gid))
         if path == "/api/resume":
             gid = norm_token(data.get("token", ""))
             with db() as con:
@@ -216,6 +242,15 @@ class Handler(BaseHTTPRequestHandler):
                 row = self.load()
                 if not row:
                     return self.send(401, {"error": "Сначала войдите"})
+                if row["level"] == 2:
+                    code, err, upd = level2.order(row, data)
+                    if not upd:
+                        return self.send(code, err)
+                    with db() as con:
+                        con.execute("update games set week=?, stock=?, total=?, log=? where id=?",
+                                    (upd["week"], upd["stock"], upd["total"], upd["log"], row["id"]))
+                        row = con.execute("select * from games where id=?", (row["id"],)).fetchone()
+                    return self.send(200, game_view(row))
                 if row["week"] > sim.ROUNDS:
                     return self.send(409, {"error": "Игра окончена"})
                 order, errors = sim.validate_order(data.get("order", {}))
